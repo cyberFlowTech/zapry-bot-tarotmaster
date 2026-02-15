@@ -141,9 +141,20 @@ class UserMemoryManager:
 
         parts = []
 
+        # 用户名称 — 最前面
+        user_name = memory.get('user_name', '')
+        if user_name and user_name != '朋友':
+            parts.append(f"- 用户的名字/昵称：{user_name}")
+
         # 基本信息 — 最重要，放最前面，用醒目格式
         basic = memory.get('basic_info', {})
         basic_items = []
+        
+        # 昵称（如果用户在聊天中自报过名字，可能和平台用户名不同）
+        nickname = basic.get('nickname', '')
+        if nickname and nickname != user_name:
+            basic_items.append(f"- 用户的昵称：{nickname}")
+        
         for key, label in [
             ('age', '年龄'), ('gender', '性别'), ('location', '位置'),
             ('occupation', '职业'), ('school', '学校'), ('major', '专业'),

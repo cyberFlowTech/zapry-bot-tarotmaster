@@ -22,25 +22,30 @@ async def fortune_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     question = ' '.join(context.args)
 
     if not question:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=f"嗨 {user_name}，想问什么呢？\n\n"
-                 f"直接在命令后面告诉我：\n"
-                 f"/fortune 你的问题\n\n"
-                 f"这个是快速求问，我会给你一个简短的指引。\n"
-                 f"如果想要更详细的解读，可以用 /tarot 哦。\n\n"
-                 f"— Elena 🌿"
+        text = (
+            f"嗨 {user_name}，想问什么呢？\n\n"
+            f"直接在命令后面告诉我：\n"
+            f"/fortune 你的问题\n\n"
+            f"这个是快速求问，我会给你一个简短的指引。\n"
+            f"如果想要更详细的解读，可以用 /tarot 哦。\n\n"
+            f"— Elena 🌿"
         )
+        try:
+            await update.message.reply_text(text, reply_to_message_id=update.message.message_id)
+        except Exception:
+            await update.message.reply_text(text)
         return
 
     # TODO: Add LLM integration here
     response = random.choice(ELENA_RESPONSES)
     
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=f"💭 关于「{question}」\n\n"
-             f"{response}\n\n"
-             f"记住，这只是一个简短的指引。如果想深入了解，建议用 /tarot 占卜。\n\n"
-             f"— Elena",
-        parse_mode='Markdown'
+    text = (
+        f"💭 关于「{question}」\n\n"
+        f"{response}\n\n"
+        f"记住，这只是一个简短的指引。如果想深入了解，建议用 /tarot 占卜。\n\n"
+        f"— Elena"
     )
+    try:
+        await update.message.reply_text(text, reply_to_message_id=update.message.message_id)
+    except Exception:
+        await update.message.reply_text(text)

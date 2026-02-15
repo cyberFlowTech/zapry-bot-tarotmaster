@@ -82,6 +82,11 @@ def _normalize_user_data(data: dict) -> dict:
     """
     将私有 API 返回的 User 格式转换为标准格式。
     处理：嵌套的 user 对象、字段名映射、移除多余字段（如 token）
+    
+    Zapry 已修复的问题（2026-02 确认）：
+    - 问题1: first_name 现在会返回用户昵称（不再为空）
+    - 问题2: is_bot 现在会正确返回
+    以下兼容代码保留作为防御性编程，避免 Zapry 回退。
     """
     if not isinstance(data, dict):
         return data
@@ -94,7 +99,7 @@ def _normalize_user_data(data: dict) -> dict:
         if old_key in data and new_key not in data:
             data[new_key] = data.pop(old_key)
     
-    # 转换 ID 为整数
+    # 转换 ID 为整数（问题3 尚未修复，仍需转换）
     if "id" in data and isinstance(data["id"], str):
         try:
             data["id"] = int(data["id"])
@@ -102,23 +107,26 @@ def _normalize_user_data(data: dict) -> dict:
             # 如果是 bot 用户名（如 "zapry_tarot_bot"），保留字符串
             logger.warning(f"⚠️  User ID 无法转换为整数: {data['id']}")
     
-    # 补全 first_name 字段（Zapry 的 bot User 对象可能缺失）
-    if "first_name" not in data:
-        # 如果有 username，使用 username
-        if "username" in data:
+    # 防御性补全 first_name（问题1 已由 Zapry 修复，此处保留兜底）
+    if not data.get("first_name"):
+        if data.get("username"):
             data["first_name"] = data["username"]
-        # 如果是 bot 且有 id，使用 id
+        elif data.get("last_name"):
+            data["first_name"] = data["last_name"]
+        elif data.get("name"):
+            data["first_name"] = data["name"]
         elif data.get("is_bot") and "id" in data:
             data["first_name"] = str(data["id"])
         else:
-            # 默认值
-            data["first_name"] = "Bot"
-        logger.info(f"🔧 补全缺失的 first_name: {data['first_name']}")
+            data["first_name"] = ""
+        if data["first_name"]:
+            logger.debug(f"🔧 补全缺失的 first_name: {data['first_name']}")
     
-    # 补全 is_bot 字段（如果不存在）
+    # 防御性补全 is_bot（问题2 已由 Zapry 修复，此处保留兜底）
     if "is_bot" not in data:
-        # 普通用户默认为 False
         data["is_bot"] = False
+        logger.debug("🔧 补全缺失的 is_bot: False")
+    
     # 移除 User 不接受的字段（token 等），保留 User 接受的字段
     return {k: v for k, v in data.items() if k in _USER_FIELDS}
 
@@ -138,10 +146,13 @@ def _normalize_chat_data(data: dict) -> dict:
     """
     将私有 API 返回的 Chat 格式转换为标准格式。
 
-    Zapry 的问题：
-    - chat.id 可能是字符串，需要转换为整数
-    - 群聊 chat.id 带 "g_" 前缀（如 "g_117686311051260010"）
-    - type 可能为空
+    Zapry 已修复的问题（2026-02 确认）：
+    - 问题5: 私聊 chat.id 现在返回用户数字 ID（不再是 bot 用户名）
+    - 问题6: chat.type 现在正确返回 "private"/"group"
+    
+    仍需处理的问题：
+    - 问题7: 群聊 chat.id 仍带 "g_" 前缀
+    - ID 类型仍可能为字符串，需转为整数
     """
     if not isinstance(data, dict):
         return data
@@ -152,7 +163,7 @@ def _normalize_chat_data(data: dict) -> dict:
         chat_id = data["id"]
         if isinstance(chat_id, str):
             if chat_id.startswith("g_"):
-                # 群组 ID：去掉 "g_" 前缀
+                # 问题7 未修复：群组 ID 仍带 "g_" 前缀
                 raw_id = chat_id[2:]
                 try:
                     data["id"] = int(raw_id)
@@ -169,53 +180,22 @@ def _normalize_chat_data(data: dict) -> dict:
                 except ValueError:
                     logger.warning(f"⚠️  Chat ID 无法转换为整数: {chat_id}")
 
-    # 补全空的 type 字段
+    # 防御性补全 type（问题6 已由 Zapry 修复，此处保留兜底）
     if not data.get("type"):
         data["type"] = "private"
-        logger.info(f"🔧 补全缺失的 Chat.type: private")
+        logger.debug("🔧 补全缺失的 Chat.type: private")
 
     return {k: v for k, v in data.items() if k in _CHAT_FIELDS}
 
 
 def _normalize_update_data(update_data: dict) -> dict:
     """
-    递归规范化 Update 数据中的所有 User 对象
-    """
-    if not isinstance(update_data, dict):
-        return update_data
+    递归规范化 Update 数据中的所有 User 对象和 Chat 对象。
     
-    # 复制数据避免修改原始数据
-    normalized = {}
-    
-    for key, value in update_data.items():
-        if key == "from" or key == "user" or key == "forward_from" or key == "via_bot":
-            # 这是 User 对象，需要规范化
-            if isinstance(value, dict):
-                normalized[key] = _normalize_user_data(value)
-            else:
-                normalized[key] = value
-        elif isinstance(value, dict):
-            # 递归处理嵌套的字典
-            normalized[key] = _normalize_update_data(value)
-        elif isinstance(value, list):
-            # 处理列表中的字典
-            normalized[key] = [
-                _normalize_update_data(item) if isinstance(item, dict) else item
-                for item in value
-            ]
-        else:
-            normalized[key] = value
-    
-    return normalized
-
-
-def _normalize_update_data(update_data: dict) -> dict:
-    """
-    递归规范化 Update 数据中的所有 User 对象和 Chat 对象
-    
-    特殊处理 Zapry 的 Bug：
-    - 在私聊 message 中，chat.id 错误地返回 bot 用户名（字符串）
-    - 正确做法：chat.id 应该等于 from.id（用户的数字 ID）
+    处理 Zapry 平台特有的数据格式差异：
+    - User 对象规范化（first_name、is_bot 补全）
+    - Chat 对象规范化（ID 类型转换、type 补全）
+    - Message 中 chat.id 和 entities 修复
     """
     if not isinstance(update_data, dict):
         return update_data
@@ -259,15 +239,17 @@ def _normalize_update_data(update_data: dict) -> dict:
 
 def _fix_message_chat_id(message_data: dict) -> dict:
     """
-    修复 Zapry 的 message 数据问题：
-    1. chat.id 格式不标准（字符串而非整数）
-    2. 缺少 entities 字段（导致命令无法识别）
+    修复 Zapry 的 message 数据问题。
 
-    Zapry 的 chat.id 规则：
-    - 私聊：chat.id 可能是 bot 的用户名字符串（如 "zapry_tarot_bot"）
-            → 需要替换为 from.id（用户 ID）
-    - 群聊：chat.id 是 "g_117686311051260010" 格式（带 g_ 前缀的群组 ID）
-            → 去掉 "g_" 前缀，转换为整数，保留群组 ID
+    Zapry 已修复（2026-02）：
+    - 问题5: 私聊 chat.id 现在正确返回用户 ID
+    - 问题8: 命令消息现在包含 entities
+
+    仍需处理：
+    - 问题7: 群聊 chat.id 仍带 "g_" 前缀
+    - ID 类型仍可能为字符串
+    
+    防御性保留所有兼容逻辑，确保向后兼容。
     """
     message_data = dict(message_data)
 
@@ -299,7 +281,7 @@ def _fix_message_chat_id(message_data: dict) -> dict:
                     if "from" in message_data and isinstance(message_data["from"], dict):
                         real_user_id = message_data["from"].get("id")
                         if real_user_id:
-                            logger.info(f"🔧 修复 Zapry 私聊 Chat ID: '{chat_id}' -> {real_user_id}")
+                            logger.debug(f"🔧 修复 Zapry 私聊 Chat ID: '{chat_id}' -> {real_user_id}")
                             chat["id"] = real_user_id
                     # 私聊场景下确保 type 正确
                     if not chat_type:
@@ -322,7 +304,7 @@ def _fix_message_chat_id(message_data: dict) -> dict:
             "offset": 0,
             "length": len(command_text)
         }]
-        logger.info(f"🔧 添加缺失的 entities: {command_text}")
+        logger.debug(f"🔧 添加缺失的 entities: {command_text}")
 
     return message_data
 
@@ -409,8 +391,11 @@ def apply_private_api_compatibility():
     """
     应用私有化 API 兼容补丁
     必须在创建 Application 之前调用
+    
+    Zapry 已修复（2026-02）：问题1,2,5,6,8
+    仍需兼容：问题3(ID类型),4(mention),7(g_前缀),9-14
     """
-    logger.info("✅ 已启用 Mimo/Zapry API 兼容层")
-    logger.info("   - User.is_bot 自动补全")
-    logger.info("   - Chat.id 自动修复（私聊中从 from.id 提取）")
-    logger.info("   - Update 数据自动规范化")
+    logger.info("✅ 已启用 Zapry API 兼容层（防御性模式）")
+    logger.info("   - User/Chat 数据自动规范化")
+    logger.info("   - 群聊 g_ 前缀 ID 自动转换")
+    logger.info("   - 命令 entities 防御性补全")

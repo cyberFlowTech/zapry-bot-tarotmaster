@@ -62,9 +62,33 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "").strip()  # 如果使用国内中转，填写中转地址
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()  # 默认使用 gpt-4o-mini
 
+# ===== USDT 充值 & 付费功能配置 =====
+# BSC 链上收款（冷钱包 — 归集目标地址）
+BSC_WALLET_ADDRESS = os.getenv("BSC_WALLET_ADDRESS", "").strip()  # 冷钱包地址（归集目标）
+BSC_USDT_CONTRACT = "0x55d398326f99059fF775485246999027B3197955"   # USDT BEP-20 合约地址（固定）
+CHAIN_POLL_INTERVAL = int(os.getenv("CHAIN_POLL_INTERVAL", "30"))  # 链上轮询间隔（秒）
+RECHARGE_ORDER_EXPIRE = int(os.getenv("RECHARGE_ORDER_EXPIRE", "3600"))  # 充值订单过期时间（秒）
+
+# HD 热钱包（为每个用户派生专属充值地址）
+HD_MNEMONIC = os.getenv("HD_MNEMONIC", "").strip()                # HD 钱包助记词（务必保密！）
+SWEEP_GAS_RESERVE_BNB = float(os.getenv("SWEEP_GAS_RESERVE_BNB", "0.001"))  # 归集时预留 Gas
+
+# 定价（USDT）
+PRICE_TAROT_DETAIL = float(os.getenv("PRICE_TAROT_DETAIL", "0.5"))    # 深度解读单价
+PRICE_TAROT_READING = float(os.getenv("PRICE_TAROT_READING", "0.3"))  # 超额塔罗占卜单价
+PRICE_AI_CHAT = float(os.getenv("PRICE_AI_CHAT", "0.1"))             # 超额 AI 对话单价
+
+# 每日免费额度
+FREE_TAROT_DAILY = int(os.getenv("FREE_TAROT_DAILY", "1"))   # 每天免费塔罗占卜次数
+FREE_CHAT_DAILY = int(os.getenv("FREE_CHAT_DAILY", "10"))    # 每天免费 AI 对话次数
+
+# 管理员 ID（可手动充值、查询余额等）
+ADMIN_USER_IDS = [uid.strip() for uid in os.getenv("ADMIN_USER_IDS", "").split(",") if uid.strip()]
+
 
 def get_current_config_summary() -> str:
     """返回当前配置摘要，方便调试"""
+    wallet_display = f"{BSC_WALLET_ADDRESS[:10]}...{BSC_WALLET_ADDRESS[-6:]}" if BSC_WALLET_ADDRESS else "未配置"
     return f"""
 ==================== 当前配置 ====================
 TG 平台: {TG_PLATFORM.upper()}
@@ -75,6 +99,11 @@ Webhook URL: {WEBHOOK_URL[:50]}... (已截断) if WEBHOOK_URL else '未配置'
 监听端口: {WEBAPP_PORT}
 OpenAI Model: {OPENAI_MODEL}
 OpenAI Base URL: {OPENAI_BASE_URL or '官方API'}
+--- 付费功能 ---
+BSC 冷钱包: {wallet_display}
+HD 钱包: {'已配置' if HD_MNEMONIC else '未配置'}
+定价: 深度解读 {PRICE_TAROT_DETAIL} / 塔罗 {PRICE_TAROT_READING} / 对话 {PRICE_AI_CHAT} USDT
+免费额度: 塔罗 {FREE_TAROT_DAILY}次/天, 对话 {FREE_CHAT_DAILY}次/天
 ================================================
 """
 

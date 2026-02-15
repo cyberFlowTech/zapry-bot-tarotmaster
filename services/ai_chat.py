@@ -96,16 +96,25 @@ class ElenaAI:
             if conversation_history:
                 messages.extend(conversation_history[-20:])  # 保留最近20条消息（约10轮对话）
             
-            # 3. 紧贴用户消息前面，单独放一条 system message 强调用户档案
+            # 3. 紧贴用户消息前面，单独放一条 system message 强调用户档案和身份
             #    这样 AI 在回答时，最近的上下文就是用户的信息，不会和人设混淆
+            user_context_parts = []
+            
+            # 始终告诉 AI 用户的名字
+            if user_name and user_name != "朋友":
+                user_context_parts.append(f"当前正在和你对话的用户叫「{user_name}」，请在对话中自然地称呼对方。")
+            
             if memory_context:
+                user_context_parts.append(
+                    "以下是这位用户的个人信息（不是你林晚晴自己的信息）。"
+                    "当用户问关于自己的问题时（如年龄、职业、星座等），必须根据以下档案回答：\n\n"
+                    f"{memory_context}"
+                )
+            
+            if user_context_parts:
                 messages.append({
                     "role": "system",
-                    "content": (
-                        "⚠️ 重要提醒：以下是【当前正在和你对话的用户】的个人信息，不是你林晚晴自己的信息。"
-                        "当用户问关于自己的问题时（如年龄、职业、星座等），必须根据以下档案回答：\n\n"
-                        f"{memory_context}"
-                    )
+                    "content": "⚠️ 重要提醒：\n" + "\n\n".join(user_context_parts)
                 })
             
             # 4. 添加当前用户消息

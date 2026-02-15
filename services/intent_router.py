@@ -26,6 +26,8 @@ INTENT_SYSTEM_PROMPT = """你是一个意图分类器。根据用户发送给塔
 - fortune：用户想快速求一个指引（类似简短占卜，不是完整塔罗）
 - intro：用户想了解林晚晴是谁
 - help：用户想知道有哪些功能/怎么用
+- recharge：用户想充值/购买/付费
+- balance：用户想查看余额/账户/剩余次数
 - chat：普通聊天、倾诉、闲聊（默认）
 
 判断规则（非常重要）：
@@ -45,7 +47,11 @@ INTENT_SYSTEM_PROMPT = """你是一个意图分类器。根据用户发送给塔
 14. "今天运气好不好" → luck
 15. "看看我的占卜记录" → tarot_history（查看历史）
 16. "给我一个指引" → fortune（快速求问）
-17. 宁可返回 chat 也不要误判！模棱两可时一定返回 chat
+17. "我想充值" → recharge（充值）
+18. "怎么付费" → recharge（充值）
+19. "还有多少余额" → balance（查余额）
+20. "还剩几次" → balance（查余额）
+21. 宁可返回 chat 也不要误判！模棱两可时一定返回 chat
 
 对于 tarot 意图，需要提取用户想问的具体问题（query 字段）。
 - "帮我测测爱情" → query="爱情运势"
@@ -74,6 +80,8 @@ _KEYWORD_PATTERNS = [
     (re.compile(r"^(清[除空]|删除).{0,3}(聊天|对话|消息).{0,3}(记录|历史)"), "clear_history", None),
     (re.compile(r"^你是谁"), "intro", None),
     (re.compile(r"^(有什么功能|怎么用|能做什么|帮助|功能列表)"), "help", None),
+    (re.compile(r"(充值|充钱|付费|购买|买|开通|解锁).{0,5}(USDT|会员|高级|功能)?"), "recharge", None),
+    (re.compile(r"(余额|账户|剩余|还[有剩]几次|用量|额度)"), "balance", None),
 ]
 
 # 明显是普通聊天的模式（直接短路，不调 LLM）

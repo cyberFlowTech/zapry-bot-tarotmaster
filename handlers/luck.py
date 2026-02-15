@@ -34,12 +34,19 @@ async def luck_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         emoji = "🌧️"
         comment = "今天的能量有点低。不如放慢节奏，多照顾自己，给自己一些休息的时间。"
 
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=f"{emoji} {user.first_name}，今天的能量指数\n\n"
-             f"📊 指数：{score}/100\n\n"
-             f"💭 {comment}\n\n"
-             f"记住，数字只是参考，你的心态和行动才是关键。\n\n"
-             f"— Elena 🌿",
-        parse_mode='Markdown'
+    text = (
+        f"{emoji} {user.first_name}，今天的能量指数\n\n"
+        f"📊 指数：{score}/100\n\n"
+        f"💭 {comment}\n\n"
+        f"记住，数字只是参考，你的心态和行动才是关键。\n\n"
+        f"— Elena 🌿"
     )
+    
+    # 引用回复，Zapry 不支持时降级
+    try:
+        await update.message.reply_text(
+            text,
+            reply_to_message_id=update.message.message_id
+        )
+    except Exception:
+        await update.message.reply_text(text)

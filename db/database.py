@@ -268,6 +268,71 @@ CREATE TABLE IF NOT EXISTS pk_records (
 );
 CREATE INDEX IF NOT EXISTS idx_pk_group ON pk_records(group_id);
 
+-- =====================================================================
+-- 用户余额：USDT 充值余额
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS user_balances (
+    user_id         TEXT PRIMARY KEY,
+    balance         REAL DEFAULT 0.0,
+    total_recharged REAL DEFAULT 0.0,
+    total_spent     REAL DEFAULT 0.0,
+    updated_at      TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+-- =====================================================================
+-- 用户热钱包：HD 派生的用户专属充值地址
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS user_wallets (
+    user_id         TEXT PRIMARY KEY,
+    wallet_index    INTEGER UNIQUE NOT NULL,      -- HD 派生索引
+    address         TEXT UNIQUE NOT NULL,          -- BSC 地址（0x...）
+    created_at      TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+-- =====================================================================
+-- 充值订单：链上 USDT 充值记录
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS recharge_orders (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         TEXT NOT NULL,
+    order_id        TEXT UNIQUE NOT NULL,
+    amount          REAL NOT NULL,
+    deposit_address TEXT,                          -- 用户充值的热钱包地址
+    status          TEXT DEFAULT 'pending',        -- pending / confirmed / expired / swept
+    tx_hash         TEXT,
+    sweep_tx_hash   TEXT,                          -- 归集交易哈希
+    from_address    TEXT,
+    created_at      TEXT DEFAULT (datetime('now', 'localtime')),
+    confirmed_at    TEXT,
+    expired_at      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_recharge_user ON recharge_orders(user_id);
+CREATE INDEX IF NOT EXISTS idx_recharge_status ON recharge_orders(status);
+CREATE INDEX IF NOT EXISTS idx_recharge_deposit ON recharge_orders(deposit_address);
+
+-- =====================================================================
+-- 消费记录：高级功能扣费流水
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS spend_records (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         TEXT NOT NULL,
+    feature         TEXT NOT NULL,                -- 'tarot_detail' / 'ai_chat' / 'tarot_reading'
+    amount          REAL NOT NULL,
+    created_at      TEXT DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_spend_user ON spend_records(user_id);
+
+-- =====================================================================
+-- 每日免费用量追踪
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS daily_usage (
+    user_id         TEXT NOT NULL,
+    usage_date      TEXT NOT NULL,                -- YYYY-MM-DD
+    tarot_count     INTEGER DEFAULT 0,
+    chat_count      INTEGER DEFAULT 0,
+    PRIMARY KEY (user_id, usage_date)
+);
+
 """
 
 

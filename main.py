@@ -122,13 +122,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     try:
-        result = await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=welcome_text
+        result = await update.message.reply_text(
+            welcome_text,
+            reply_to_message_id=update.message.message_id
         )
         logger.error(f"✅ start 消息发送成功! message_id={result.message_id}")
-    except Exception as e:
-        logger.error(f"❌ start 消息发送失败: {e}", exc_info=True)
+    except Exception:
+        try:
+            result = await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=welcome_text
+            )
+            logger.error(f"✅ start 消息发送成功(降级)! message_id={result.message_id}")
+        except Exception as e:
+            logger.error(f"❌ start 消息发送失败: {e}", exc_info=True)
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """处理 API 错误，避免刷屏"""
@@ -156,8 +163,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Sends a help message."""
     chat = update.effective_chat
     
+    from config import FREE_TAROT_DAILY, FREE_CHAT_DAILY, PRICE_TAROT_DETAIL, PRICE_TAROT_READING, PRICE_AI_CHAT
+
     # 基础命令
-    base_help = """🌙 林晚晴 - 功能列表
+    base_help = f"""🌙 林晚晴 - 功能列表
 
 ━━━━━━━━━━━━━━━━━
 💬 对话功能
@@ -192,6 +201,23 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 示例：
 • /tarot 我应该换工作吗
 • /tarot 这段感情有结果吗
+
+━━━━━━━━━━━━━━━━━
+💎 充值 & 高级功能
+━━━━━━━━━━━━━━━━━
+
+/recharge [金额] - USDT 充值（默认 10 USDT）
+/balance - 查看余额和今日用量
+
+📋 免费额度（每日刷新）：
+• 塔罗占卜 {FREE_TAROT_DAILY} 次/天
+• AI 对话 {FREE_CHAT_DAILY} 次/天
+• /luck, /fortune, /history 等不限
+
+💎 高级功能定价：
+• 📖 深度解读 {PRICE_TAROT_DETAIL} USDT/次
+• 🎴 超额塔罗 {PRICE_TAROT_READING} USDT/次
+• 💬 超额对话 {PRICE_AI_CHAT} USDT/次
 """
     
     # 群组功能
@@ -219,10 +245,16 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     help_text += "\n━━━━━━━━━━━━━━━━━\n\n记住：我不替你做决定，只帮你看清选择。\n真正的力量，在你自己手中。\n\n— Elena 🌿"
     
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id, 
-        text=help_text
-    )
+    try:
+        await update.message.reply_text(
+            help_text,
+            reply_to_message_id=update.message.message_id
+        )
+    except Exception:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=help_text
+        )
 
 
 def build_application() -> Application:
@@ -239,6 +271,11 @@ def build_application() -> Application:
         builder = ApplicationBuilder().bot(bot)
     else:
         builder = ApplicationBuilder().token(BOT_TOKEN)
+    
+    # 注册生命周期回调（链上监听等后台服务）
+    builder.post_init(post_init)
+    builder.post_shutdown(post_shutdown)
+    
     application = builder.build()
     
     # 导入塔罗占卜 handlers（渐进式抽牌）
@@ -274,6 +311,14 @@ def build_application() -> Application:
         elena_intro_command,
         memory_command,        # 新增：查看档案
         forget_command         # 新增：清除档案
+    )
+    # 导入支付处理器
+    from handlers.payment import (
+        recharge_command,
+        balance_command,
+        topup_command,
+        check_balance_callback,
+        go_recharge_callback,
     )
 
     application.add_handler(TypeHandler(Update, log_user_input), group=-1)
@@ -313,6 +358,13 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("fortune", fortune_command))
     application.add_handler(CommandHandler("luck", luck_command))
     
+    # 支付相关
+    application.add_handler(CommandHandler("recharge", recharge_command))
+    application.add_handler(CommandHandler("balance", balance_command))
+    application.add_handler(CommandHandler("topup", topup_command))  # 管理员手动充值
+    application.add_handler(CallbackQueryHandler(check_balance_callback, pattern="^check_balance$"))
+    application.add_handler(CallbackQueryHandler(go_recharge_callback, pattern="^go_recharge$"))
+    
     # AI 对话处理器（必须放在最后，作为兜底处理）
     # 私聊消息处理
     from telegram.ext import MessageHandler, filters
@@ -334,6 +386,19 @@ def build_application() -> Application:
 
     application.add_error_handler(error_handler)
     return application
+
+
+async def post_init(application: Application) -> None:
+    """应用初始化后的回调：启动链上监听等后台服务"""
+    from services.chain_monitor import chain_monitor
+    chain_monitor.set_bot(application.bot)
+    await chain_monitor.start()
+
+
+async def post_shutdown(application: Application) -> None:
+    """应用关闭前的回调：停止后台服务"""
+    from services.chain_monitor import chain_monitor
+    await chain_monitor.stop()
 
 
 def run_application(application: Application) -> None:

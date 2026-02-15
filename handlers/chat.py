@@ -14,11 +14,68 @@ from services.memory_extractor import memory_extractor
 from services.chat_history import chat_history_manager
 from services.tarot_history import tarot_history_manager
 from services.intent_router import intent_router
+from services.quota import quota_manager
 from utils.zapry_compat import clean_markdown
 import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+# ========== 用户名获取 ==========
+
+def get_display_name(user) -> str:
+    """
+    获取用户的最佳显示名称。
+    优先级：first_name > username > last_name > "朋友"
+    
+    Zapry 已修复 first_name（问题1），现在正常返回用户昵称。
+    保留多级降级逻辑作为防御性编程。
+    """
+    # 优先用 first_name（标准 Telegram 字段）
+    name = user.first_name or ""
+    
+    # 如果 first_name 是纯数字（可能是 Zapry 用 ID 补全的），尝试 username
+    if name and not name.isdigit():
+        return name
+    
+    # 尝试 username
+    if user.username:
+        return user.username
+    
+    # 尝试 last_name
+    if user.last_name:
+        return user.last_name
+    
+    # first_name 是数字也比"朋友"好
+    if name:
+        return name
+    
+    return "朋友"
+
+
+# ========== 安全回复：自动引用 + Zapry 降级 ==========
+
+async def safe_reply(message, text: str, quote: bool = True):
+    """
+    安全发送回复消息，自动引用原消息。
+    如果平台不支持 reply_to_message_id（如 Zapry），则自动降级为普通消息。
+    
+    Args:
+        message: update.message 对象
+        text: 回复文本
+        quote: 是否引用原消息（默认 True）
+    """
+    if quote:
+        try:
+            return await message.reply_text(
+                text,
+                reply_to_message_id=message.message_id
+            )
+        except Exception as e:
+            logger.debug(f"引用回复失败（平台可能不支持），降级为普通回复: {e}")
+    
+    return await message.reply_text(text)
 
 
 # ========== 意图路由：自然语言 → 命令执行 ==========
@@ -34,6 +91,8 @@ _TRANSITION_MESSAGES = {
     "fortune": None,  # fortune 命令自带回复
     "intro": None,  # intro 命令自带完整回复
     "help": None,  # help 命令自带完整回复
+    "recharge": None,  # recharge 命令自带完整回复
+    "balance": None,  # balance 命令自带完整回复
 }
 
 
@@ -46,10 +105,10 @@ async def _route_to_command(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
     logger.info(f"🚀 意图路由 | intent={intent} | query={query[:50]}")
 
-    # 发送过渡话术（如果有）
+    # 发送过渡话术（如果有），引用用户原消息
     transition = _TRANSITION_MESSAGES.get(intent)
     if transition:
-        await update.message.reply_text(transition)
+        await safe_reply(update.message, transition)
 
     # 根据意图调用对应 handler
     if intent == "tarot":
@@ -87,6 +146,14 @@ async def _route_to_command(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     elif intent == "help":
         from main import help_command
         await help_command(update, context)
+
+    elif intent == "recharge":
+        from handlers.payment import recharge_command
+        await recharge_command(update, context)
+
+    elif intent == "balance":
+        from handlers.payment import balance_command
+        await balance_command(update, context)
 
     else:
         logger.warning(f"⚠️ 未处理的意图: {intent}")
@@ -139,14 +206,15 @@ async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_T
     
     user = update.effective_user
     user_id = str(user.id)
-    user_name = user.first_name or "朋友"
+    user_name = get_display_name(user)
     user_message = update.message.text or ""
     
     logger.info(f"💬 收到私聊 | 用户: {user_name} ({user_id}) | 内容: {user_message[:50]}")
     
     # 如果消息为空（可能是图片等），友好提示
     if not user_message.strip():
-        await update.message.reply_text(
+        await safe_reply(
+            update.message,
             "我看到你发了一些内容，但我目前只能回复文字消息呢。\n\n"
             "如果你想占卜，可以使用 /tarot 命令；\n"
             "如果想聊聊天，直接文字告诉我就好。😊"
@@ -179,13 +247,28 @@ async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_T
     except Exception as e:
         logger.error(f"❌ 意图识别异常，回退到正常对话: {e}")
     
+    # === AI 对话配额检查 ===
+    quota_result = await quota_manager.check_and_deduct("ai_chat", user_id)
+    if not quota_result.allowed:
+        # 取消数据加载任务
+        for task in [memory_task, history_task, tarot_task]:
+            task.cancel()
+        await safe_reply(update.message, quota_result.message)
+        return
+
     # === 等待数据加载完成（已在后台并行运行） ===
     user_memory, conversation_history, tarot_readings = await asyncio.gather(
         memory_task, history_task, tarot_task
     )
     
-    if not user_memory.get('user_name') or user_memory['user_name'] == '朋友':
+    # 每次都同步最新的平台用户名到记忆档案
+    if user_name and user_name != "朋友":
         user_memory['user_name'] = user_name
+        # 同步到 basic_info.nickname，让 AI 和记忆系统都能访问
+        if 'basic_info' not in user_memory:
+            user_memory['basic_info'] = {}
+        if not user_memory['basic_info'].get('nickname'):
+            user_memory['basic_info']['nickname'] = user_name
     memory_context = user_memory_manager.format_memory_for_ai(user_memory)
     tarot_context = tarot_history_manager.format_readings_for_ai(tarot_readings)
     
@@ -205,7 +288,7 @@ async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_T
     reply = clean_markdown(reply)
     
     # 7. 先回复用户（最高优先级，不让用户等任何后处理）
-    await update.message.reply_text(reply)
+    await safe_reply(update.message, reply)
     logger.info(f"✅ 私聊回复成功 | 用户: {user_name}")
     
     # 8. 后处理：持久化 + 记忆提取（全部后台化，不阻塞下一条消息）
@@ -231,7 +314,7 @@ async def handle_group_mention(update: Update, context: ContextTypes.DEFAULT_TYP
     # 判断是否@了机器人
     is_mentioned = False
     
-    # 方式1: 检查 entities 中的 mention（标准 Telegram）
+    # 方式1: 检查 entities 中的 mention（标准 Telegram + Zapry 兼容）
     if update.message.entities:
         for entity in update.message.entities:
             if entity.type == "mention":
@@ -242,28 +325,26 @@ async def handle_group_mention(update: Update, context: ContextTypes.DEFAULT_TYP
                         is_mentioned = True
                         break
                 
-                # Zapry 兼容：length=0 但 entity.user 有 username
+                # Zapry 兼容（问题4 未修复）：length=0 但 entity.user 有信息
                 if not is_mentioned and hasattr(entity, 'user') and entity.user:
                     entity_username = entity.user.username or ""
-                    # 检查 entity 的 user.username 是否匹配 bot 的 username 或显示名
                     if bot_username and entity_username.lower() == bot_username.lower():
                         is_mentioned = True
                         break
-                    # Zapry 的 username 字段可能存的是显示名（如"塔罗牌运势"）
+                    # Zapry 可能用显示名（如"塔罗牌运势"）代替 username
                     if entity_username and entity_username in message_text:
                         is_mentioned = True
                         break
     
-    # 方式2: 检查文本中是否包含 @bot_username
+    # 方式2: 文本匹配 @bot_username
     if not is_mentioned and bot_username:
         if f"@{bot_username}" in message_text:
             is_mentioned = True
     
-    # 方式3: 检查文本中是否包含 @显示名（Zapry 使用显示名而非 bot ID）
+    # 方式3: 通过 bot ID 匹配（Zapry 的 entity.user.id 可能是 bot 的 ID）
     if not is_mentioned and update.message.entities:
         for entity in update.message.entities:
             if entity.type == "mention" and hasattr(entity, 'user') and entity.user:
-                # 如果 entity 里有 user 且这个 user 就是 bot 本身
                 entity_user_id = entity.user.id
                 bot_id = context.bot.id
                 if entity_user_id and bot_id and str(entity_user_id) == str(bot_id):
@@ -275,7 +356,7 @@ async def handle_group_mention(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     
     user = update.effective_user
-    user_name = user.first_name or "朋友"
+    user_name = get_display_name(user)
     
     # 移除@机器人的部分，获取真正的消息内容
     clean_message = message_text
@@ -295,7 +376,8 @@ async def handle_group_mention(update: Update, context: ContextTypes.DEFAULT_TYP
     
     # 如果清理后的消息为空
     if not clean_message:
-        await update.message.reply_text(
+        await safe_reply(
+            update.message,
             "你好呀，找我有什么事吗？\n\n"
             "想占卜的话，可以使用 /tarot 命令；\n"
             "想聊天的话，直接@我说就好。😊"
@@ -338,11 +420,8 @@ async def handle_group_mention(update: Update, context: ContextTypes.DEFAULT_TYP
     # 清理 Markdown 标记
     reply = clean_markdown(reply)
     
-    # 回复时@用户
-    await update.message.reply_text(
-        reply,
-        reply_to_message_id=update.message.message_id
-    )
+    # 回复时引用用户消息
+    await safe_reply(update.message, reply)
     
     logger.info(f"✅ 群组回复成功 | 用户: {user_name} | 群组: {update.effective_chat.id}")
 
@@ -360,7 +439,8 @@ async def clear_history_command(update: Update, context: ContextTypes.DEFAULT_TY
     # 兼容：也清 context.user_data（以防还有残留引用）
     context.user_data['conversation_history'] = []
     
-    await update.message.reply_text(
+    await safe_reply(
+        update.message,
         "好的，我们的对话记录已经清空了。\n\n"
         "就像翻开了新的一页。\n\n"
         "有什么想聊的吗？我在这里听你说。😊"
@@ -378,7 +458,8 @@ async def memory_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_memory = await user_memory_manager.get_user_memory(user_id)
     
     if user_memory.get('conversation_count', 0) == 0:
-        await update.message.reply_text(
+        await safe_reply(
+            update.message,
             "我们还没有深入聊过天呢。\n\n"
             "多和我说说话，我会慢慢了解你的。😊\n\n"
             "想聊什么都可以，我在这里听你说。\n\n"
@@ -436,7 +517,7 @@ async def memory_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     memory_text += "如果想清除这些记忆，可以使用 /forget 命令。\n\n"
     memory_text += "— Elena 🌿"
     
-    await update.message.reply_text(memory_text)
+    await safe_reply(update.message, memory_text)
     
     logger.info(f"👀 查看档案 | 用户: {user_id}")
 
@@ -450,7 +531,8 @@ async def forget_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_memory = await user_memory_manager.get_user_memory(user_id)
     
     if user_memory.get('conversation_count', 0) == 0:
-        await update.message.reply_text(
+        await safe_reply(
+            update.message,
             "其实我还没有记录关于你的信息呢。\n\n"
             "不用担心，你的隐私很安全。😊\n\n"
             "— Elena 🌿"
@@ -470,7 +552,8 @@ async def forget_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['conversation_history'] = []
     
     if success:
-        await update.message.reply_text(
+        await safe_reply(
+            update.message,
             "好的，我已经忘记关于你的所有记忆了。\n\n"
             "就像我们第一次见面一样。\n\n"
             "如果以后想让我重新了解你，随时和我聊天就好。\n\n"
@@ -478,7 +561,8 @@ async def forget_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         logger.info(f"🗑️ 用户档案已删除 | 用户: {user_id}")
     else:
-        await update.message.reply_text(
+        await safe_reply(
+            update.message,
             "抱歉，清除记忆时出了点问题。\n\n"
             "你可以过一会儿再试试。\n\n"
             "— Elena 🌿"
@@ -515,6 +599,6 @@ async def elena_intro_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         "— Elena 🌿"
     )
     
-    await update.message.reply_text(intro_text)
+    await safe_reply(update.message, intro_text)
     
     logger.info(f"ℹ️ 自我介绍 | 用户: {update.effective_user.id}")

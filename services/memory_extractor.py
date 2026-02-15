@@ -15,9 +15,17 @@ logger = logging.getLogger(__name__)
 EXTRACTION_MODEL = "gpt-3.5-turbo"  # 比GPT-4便宜60%
 
 # 记忆提取提示词
-MEMORY_EXTRACTION_PROMPT = """你是一个信息提取专家。请从以下对话中提取用户的关键信息。
+MEMORY_EXTRACTION_PROMPT = """你是一个信息提取专家。请从以下对话中提取【用户】的关键信息。
 
-【重要】只提取明确提到的信息，不要推测或编造。如果某个字段没有信息，保持为空。
+【最高优先级规则】
+1. 只提取【用户】自己说的关于自己的信息。用户的消息标记为"用户:"。
+2. 【绝对禁止】把 Elena（AI助手）说的关于她自己的信息当成用户的信息！
+   - Elena 说"我住在上海" → 这是 Elena 的信息，不是用户的，忽略！
+   - Elena 说"我在浙江大学读书" → 这是 Elena 的信息，不是用户的，忽略！
+   - Elena 说"我是心理咨询师" → 这是 Elena 的信息，不是用户的，忽略！
+   - Elena 说"我经历了感情转折" → 这是 Elena 的信息，不是用户的，忽略！
+3. 只有当【用户】说"我住在北京""我18岁""我是学生"时，才提取对应信息。
+4. 不要推测或编造。如果某个字段没有用户自己说的信息，保持为空/null。
 
 分析对话，提取以下信息（JSON格式）：
 
@@ -125,10 +133,15 @@ class MemoryExtractor:
             response = await self.client.chat.completions.create(
                 model=EXTRACTION_MODEL,
                 messages=[
-                    {"role": "system", "content": "你是一个信息提取专家，输出标准JSON格式。"},
+                    {"role": "system", "content": (
+                        "你是一个信息提取专家，输出标准JSON格式。\n"
+                        "你的任务是从对话中提取【用户】自己的个人信息。\n"
+                        "对话中有两个角色：'用户'是你要提取信息的人，'Elena'是AI助手。\n"
+                        "【关键】Elena说的关于她自己的任何信息（职业、学校、居住地、经历等），绝对不能当作用户的信息！"
+                    )},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.3,  # 降低随机性，提高提取准确性
+                temperature=0.1,  # 进一步降低随机性，提高提取准确性
                 max_tokens=1000
             )
             

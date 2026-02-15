@@ -11,12 +11,26 @@ import datetime
 from services.tarot_data import TarotDeck
 from services.group_manager import group_manager
 from services.tarot_history import tarot_history_manager
+from services.quota import quota_manager
 from utils.zapry_compat import clean_markdown
+from config import PRICE_TAROT_READING, PRICE_TAROT_DETAIL
 
 tarot_deck = TarotDeck()
 
 import logging
 _tarot_logger = logging.getLogger(__name__)
+
+
+async def _safe_reply(message, text: str, reply_markup=None):
+    """安全引用回复，Zapry 不支持时自动降级"""
+    try:
+        return await message.reply_text(
+            text,
+            reply_to_message_id=message.message_id,
+            reply_markup=reply_markup
+        )
+    except Exception:
+        return await message.reply_text(text, reply_markup=reply_markup)
 
 
 def _clean_text_for_zapry(text: str) -> str:
@@ -60,10 +74,7 @@ async def tarot_history_command(update: Update, context: ContextTypes.DEFAULT_TY
             "/tarot 你的问题\n\n"
             "— Elena 🌿"
         )
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=text
-        )
+        await _safe_reply(update.message, text)
         return
     
     # 构建历史记录展示（最新的在前）
@@ -87,10 +98,7 @@ async def tarot_history_command(update: Update, context: ContextTypes.DEFAULT_TY
     
     text = _clean_text_for_zapry(history_text)
     
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=text
-    )
+    await _safe_reply(update.message, text)
 
 
 def _generate_position_advice(position: str, card: dict, orientation: str) -> str:
@@ -236,10 +244,7 @@ async def tarot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "真正的选择权，始终在你自己手中。\n\n"
             "— Elena 🌿"
         )
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=text
-        )
+        await _safe_reply(update.message, text)
         return
     
     # 获取问题
@@ -247,19 +252,30 @@ async def tarot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # 问题长度验证
     if len(question) < 2:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="💭 问题有点太简短了呢，能说得再具体一些吗？"
-        )
+        await _safe_reply(update.message, "💭 问题有点太简短了呢，能说得再具体一些吗？")
         return
     
     if len(question) > 200:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="💭 问题有点太长了，能精简到200字以内吗？\n\n抓住核心的困惑，会更容易看清方向。"
+        await _safe_reply(
+            update.message,
+            "💭 问题有点太长了，能精简到200字以内吗？\n\n抓住核心的困惑，会更容易看清方向。"
         )
         return
     
+    # 配额检查：每日免费次数 + 超额扣费
+    user_id = str(update.effective_user.id)
+    quota_result = await quota_manager.check_and_deduct("tarot_reading", user_id)
+    if not quota_result.allowed:
+        await _safe_reply(update.message, _clean_text_for_zapry(quota_result.message))
+        return
+
+    # 如果是付费使用，附加提示
+    cost_hint = ""
+    if not quota_result.is_free:
+        cost_hint = f"\n\n💳 本次占卜消耗 {quota_result.cost} USDT，余额 {quota_result.balance:.4f} USDT"
+    elif quota_result.remaining_free >= 0:
+        cost_hint = f"\n\n🆓 今日免费占卜剩余 {quota_result.remaining_free} 次"
+
     # 初始化会话 - 准备抽牌
     context.user_data['tarot_question'] = question
     context.user_data['tarot_spread'] = tarot_deck.get_three_card_spread()
@@ -280,13 +296,10 @@ async def tarot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎴 现在 - 当前的状态\n"
         f"🎴 未来 - 发展的趋势\n\n"
         f"准备好后，点击下方按钮，我们开始。"
+        f"{cost_hint}"
     )
     
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=text,
-        reply_markup=reply_markup
-    )
+    await _safe_reply(update.message, text, reply_markup=reply_markup)
 
 
 async def reveal_card_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -502,9 +515,10 @@ async def show_final_result_callback(update: Update, context: ContextTypes.DEFAU
         f"{brief_interpretation}"
     )
     
-    # 按钮
+    # 按钮（深度解读标注价格）
+    detail_btn_text = f"📖 查看深度解读 ({PRICE_TAROT_DETAIL} USDT)"
     keyboard = [
-        [InlineKeyboardButton("📖 查看深度解读", callback_data='tarot_detail')],
+        [InlineKeyboardButton(detail_btn_text, callback_data='tarot_detail')],
         [
             InlineKeyboardButton("🔁 再占一次", callback_data='tarot_again'),
             InlineKeyboardButton("🌙 今日运势", callback_data='tarot_luck')
@@ -527,7 +541,7 @@ async def show_final_result_callback(update: Update, context: ContextTypes.DEFAU
 
 
 async def tarot_detail_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """显示深度解读 - 提供更多可操作的建议"""
+    """显示深度解读 - 提供更多可操作的建议（付费功能）"""
     query = update.callback_query
     
     spread = context.user_data.get('tarot_spread')
@@ -540,6 +554,26 @@ async def tarot_detail_callback(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return
     
+    # 付费门槛：深度解读需要扣费
+    user_id = str(query.from_user.id)
+    quota_result = await quota_manager.check_and_deduct("tarot_detail", user_id)
+    if not quota_result.allowed:
+        # 余额不足 — 显示充值引导，保留按钮让用户充值后重试
+        keyboard = [
+            [InlineKeyboardButton("💎 去充值", callback_data='go_recharge')],
+            [InlineKeyboardButton("🔁 再占一次", callback_data='tarot_again')],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await _send_message(
+            query, context,
+            text=f"📖 深度解读\n━━━━━━━━━━━━━━━━━\n\n{quota_result.message}",
+            reply_markup=reply_markup
+        )
+        return
+
+    # 扣费成功提示
+    cost_line = f"\n\n💳 本次消耗 {quota_result.cost} USDT，余额 {quota_result.balance:.4f} USDT"
+
     # 生成深度解读
     detailed_interpretation = tarot_deck.generate_spread_interpretation(spread, question)
     
@@ -565,6 +599,7 @@ async def tarot_detail_callback(update: Update, context: ContextTypes.DEFAULT_TY
         f"━━━━━━━━━━━━━━━━━\n"
         f"⚠️ 风险与机会:\n"
         f"{risk_opportunity}"
+        f"{cost_line}"
     )
     
     keyboard = [
