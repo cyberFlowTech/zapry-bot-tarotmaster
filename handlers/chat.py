@@ -326,10 +326,11 @@ async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_T
     # 添加用户消息到缓冲区（不阻塞主流程，fire-and-forget）
     asyncio.create_task(conversation_buffer.add_message(user_id, "user", user_message))
     
-    # 5. 调用 AI 获取回复（注入用户偏好）
+    # 5. 调用 AI 获取回复（Agent Loop 模式，支持自主工具调用）
     preferences = user_memory.get("preferences", {})
-    reply = await elena_ai.chat(
+    reply = await elena_ai.chat_agent_loop(
         user_message=user_message,
+        user_id=user_id,
         user_name=user_name,
         conversation_history=conversation_history,
         tarot_context=tarot_context,

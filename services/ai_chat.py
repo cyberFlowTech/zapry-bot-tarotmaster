@@ -362,6 +362,7 @@ class ElenaAI:
         try:
             from zapry_agents_sdk.agent import AgentLoop, AgentHooks
         except ImportError:
+            logger.debug("AgentLoop 不可用，降级为普通 chat")
             return await self.chat(
                 user_message, user_name, conversation_history,
                 tarot_context, memory_context, preferences
@@ -374,42 +375,70 @@ class ElenaAI:
             )
 
         try:
-            # 构建 system prompt（和 chat() 一致）
+            # 构建 system prompt（与 chat() 保持一致的上下文注入）
             system_content = ELENA_SYSTEM_PROMPT
             if tarot_context:
                 system_content += f"\n\n{tarot_context}"
-            if memory_context:
-                system_content += (
-                    "\n\n⚠️ 以下是当前用户的个人信息：\n" + memory_context
-                )
-            if preferences:
-                from services.agent_tools import _TOOLS_AVAILABLE
-                if _TOOLS_AVAILABLE:
-                    try:
-                        from zapry_agents_sdk import build_preference_prompt
-                        pref_prompt = build_preference_prompt(preferences)
-                        if pref_prompt:
-                            system_content += f"\n\n{pref_prompt}"
-                    except ImportError:
-                        pass
 
-            # 构建 LLM 函数（AgentLoop 需要）
+            # 构建额外上下文（生活状态 + 用户档案 + 偏好）
+            extra_parts = []
+
+            from services.daily_state import daily_state_manager
+            extra_parts.append(daily_state_manager.format_for_ai())
+
+            if user_name and user_name != "朋友":
+                extra_parts.append(f"当前正在和你对话的用户叫「{user_name}」，请在对话中自然地称呼对方。")
+
+            if memory_context:
+                extra_parts.append(
+                    "以下是这位用户的个人信息（不是你林晚晴自己的信息）。"
+                    "当用户问关于自己的问题时（如年龄、职业、星座等），必须根据以下档案回答：\n\n"
+                    + memory_context
+                )
+
+            if preferences:
+                pref_hints = []
+                style = preferences.get("style", "balanced")
+                tone = preferences.get("tone", "mixed")
+                if style == "concise":
+                    pref_hints.append("这位用户偏好简洁的回复，请控制在 100 字以内，直接说重点。")
+                elif style == "detailed":
+                    pref_hints.append("这位用户喜欢详细的解读，可以展开讲解，不用担心太长。")
+                if tone == "casual":
+                    pref_hints.append("这位用户喜欢轻松口语化的表达，少用正式或文言风格。")
+                elif tone == "classical":
+                    pref_hints.append("这位用户喜欢专业正式的表达风格。")
+                if pref_hints:
+                    extra_parts.append("回复风格偏好：\n" + "\n".join(pref_hints))
+
+            extra_context = "⚠️ 重要提醒：\n" + "\n\n".join(extra_parts) if extra_parts else None
+
+            # 构建 LLM 函数
             async def llm_fn(messages, tools=None):
                 kwargs = dict(
                     model=OPENAI_MODEL,
                     messages=messages,
-                    temperature=0.7,
+                    temperature=0.8,
                     max_tokens=800,
+                    top_p=0.9,
+                    frequency_penalty=0.4,
+                    presence_penalty=0.4,
                 )
                 if tools:
                     kwargs["tools"] = tools
                 resp = await self.client.chat.completions.create(**kwargs)
                 return resp.choices[0].message
 
-            # 构建 Agent Loop
+            # 构建 hooks（SDK 要求 async）
+            async def _on_tool_start(name, args):
+                logger.info(f"🔧 Agent 调用工具: {name} | args: {args}")
+
+            async def _on_tool_end(name, result, err):
+                logger.info(f"🔧 工具返回: {name} | 长度: {len(str(result)) if result else 0} | 错误: {err}")
+
             hooks = AgentHooks(
-                on_tool_start=lambda name, args: logger.info(f"🔧 Agent 调用工具: {name} | args: {args}"),
-                on_tool_end=lambda name, result, err: logger.info(f"🔧 工具返回: {name} | 结果长度: {len(str(result)) if result else 0}"),
+                on_tool_start=_on_tool_start,
+                on_tool_end=_on_tool_end,
             )
 
             loop = AgentLoop(
@@ -418,39 +447,39 @@ class ElenaAI:
                 system_prompt=system_content,
                 max_turns=5,
                 hooks=hooks,
+                guardrails=self._guardrails,
+                tracer=self._tracer,
             )
 
             # 构建对话历史
-            history = []
-            if conversation_history:
-                history = conversation_history[-10:]
+            history = conversation_history[-20:] if conversation_history else []
 
             result = await loop.run(
-                user_message,
+                user_input=user_message,
                 conversation_history=history,
+                extra_context=extra_context,
             )
 
             reply = result.final_output or ""
+
+            # 身份泄露兜底修复（Guardrails 可能没拦住的情况）
+            if reply:
+                reply = re.sub(
+                    r'我是(一个|一台)?(AI|人工智能|语言模型|机器人)',
+                    '我是晚晴呀',
+                    reply
+                )
+
             logger.info(
                 f"✅ Agent Loop 完成 | 用户: {user_name} | "
                 f"轮数: {result.total_turns} | 工具调用: {result.tool_calls_count} | "
                 f"原因: {result.stopped_reason}"
             )
 
-            # Output Guardrail
-            if self._guardrails and reply:
-                output_result = await self._guardrails.check_output_safe(text=reply)
-                if not output_result.passed:
-                    reply = re.sub(
-                        r'我是(一个|一台)?(AI|人工智能|语言模型|机器人)',
-                        '我是晚晴呀',
-                        reply
-                    )
-
             return reply if reply else "抱歉，我刚才想了半天没想出来，能再换个方式问我吗？😅"
 
         except Exception as e:
-            logger.warning(f"⚠️ Agent Loop 失败，降级为普通对话: {e}")
+            logger.warning(f"⚠️ Agent Loop 失败，降级为普通对话: {e}", exc_info=True)
             return await self.chat(
                 user_message, user_name, conversation_history,
                 tarot_context, memory_context, preferences
