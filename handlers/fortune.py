@@ -1,9 +1,11 @@
+"""
+快速求问 - 晚晴的简短指引
+"""
 import random
 from telegram import Update
 from telegram.ext import ContextTypes
 
-# Elena's gentle responses
-ELENA_RESPONSES = [
+RESPONSES = [
     "从能量流动来看，这件事虽然会有些波折，但最终会有转机。保持耐心，相信过程。",
     "现在的时机还不够成熟，不如先观察、积累，等待更好的契机。",
     "我感觉到一些积极的能量在汇聚，如果你准备好了，可以尝试向前迈一步。",
@@ -16,36 +18,34 @@ ELENA_RESPONSES = [
     "你比你想象的更有力量。相信自己的判断，你已经知道答案了。",
 ]
 
+
+async def _safe_reply(message, text: str):
+    try:
+        await message.reply_text(text, reply_to_message_id=message.message_id)
+    except Exception:
+        await message.reply_text(text)
+
+
 async def fortune_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """快速求问（林晚晴的简短指引）"""
+    """快速求问"""
     user_name = update.effective_user.first_name
-    question = ' '.join(context.args)
+    question = " ".join(context.args) if context.args else ""
 
     if not question:
-        text = (
+        await _safe_reply(update.message,
             f"嗨 {user_name}，想问什么呢？\n\n"
             f"直接在命令后面告诉我：\n"
             f"/fortune 你的问题\n\n"
             f"这个是快速求问，我会给你一个简短的指引。\n"
             f"如果想要更详细的解读，可以用 /tarot 哦。\n\n"
-            f"— Elena 🌿"
+            f"— 晚晴 🌿"
         )
-        try:
-            await update.message.reply_text(text, reply_to_message_id=update.message.message_id)
-        except Exception:
-            await update.message.reply_text(text)
         return
 
-    # TODO: Add LLM integration here
-    response = random.choice(ELENA_RESPONSES)
-    
-    text = (
+    response = random.choice(RESPONSES)
+    await _safe_reply(update.message,
         f"💭 关于「{question}」\n\n"
         f"{response}\n\n"
         f"记住，这只是一个简短的指引。如果想深入了解，建议用 /tarot 占卜。\n\n"
-        f"— Elena"
+        f"— 晚晴 🌿"
     )
-    try:
-        await update.message.reply_text(text, reply_to_message_id=update.message.message_id)
-    except Exception:
-        await update.message.reply_text(text)
