@@ -293,6 +293,12 @@ class UserMemoryManager:
             },
             "conversation_summary": "",
             "meta": {"memory_extraction_count": 0, "last_extraction": None},
+            "preferences": {
+                "style": "balanced",       # concise / detailed / balanced
+                "tone": "mixed",           # casual / classical / mixed
+                "proactive_enabled": True,  # 主动消息开关
+                "updated_at": None,
+            },
         }
 
     @staticmethod

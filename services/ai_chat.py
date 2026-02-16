@@ -64,7 +64,7 @@ class ElenaAI:
     
     async def chat(self, user_message: str, user_name: str = "朋友", 
                    conversation_history: list = None, tarot_context: str = None,
-                   memory_context: str = None) -> str:
+                   memory_context: str = None, preferences: dict = None) -> str:
         """
         与林晚晴对话
         
@@ -110,6 +110,22 @@ class ElenaAI:
                     "当用户问关于自己的问题时（如年龄、职业、星座等），必须根据以下档案回答：\n\n"
                     f"{memory_context}"
                 )
+
+            # 注入用户偏好（自我反思系统）
+            if preferences:
+                style = preferences.get("style", "balanced")
+                tone = preferences.get("tone", "mixed")
+                pref_hints = []
+                if style == "concise":
+                    pref_hints.append("这位用户偏好简洁的回复，请控制在 100 字以内，直接说重点。")
+                elif style == "detailed":
+                    pref_hints.append("这位用户喜欢详细的解读，可以展开讲解，不用担心太长。")
+                if tone == "casual":
+                    pref_hints.append("这位用户喜欢轻松口语化的表达，少用正式或文言风格。")
+                elif tone == "classical":
+                    pref_hints.append("这位用户喜欢专业正式的表达风格。")
+                if pref_hints:
+                    user_context_parts.append("回复风格偏好：\n" + "\n".join(pref_hints))
             
             if user_context_parts:
                 messages.append({

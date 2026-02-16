@@ -18,6 +18,7 @@ from services.quota import quota_manager
 from utils.zapry_compat import clean_markdown
 import asyncio
 import logging
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +164,7 @@ async def _route_to_command(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
 async def _post_reply_tasks(user_id: str, user_message: str, reply: str, user_memory: dict):
     """
-    回复用户之后的后台任务（持久化 + 记忆提取）
+    回复用户之后的后台任务（持久化 + 记忆提取 + 反馈检测）
     完全异步执行，不影响用户体验
     """
     try:
@@ -186,8 +187,55 @@ async def _post_reply_tasks(user_id: str, user_message: str, reply: str, user_me
                 if extracted_info:
                     await user_memory_manager.update_user_memory(user_id, extracted_info)
                     logger.info(f"✅ 用户档案已更新 | 用户: {user_id}")
+
+        # 自我反思：检测用户反馈信号并调整偏好
+        await _detect_and_adapt(user_id, user_message, user_memory)
+
     except Exception as e:
         logger.error(f"❌ 后台任务失败: {e}", exc_info=True)
+
+
+# ========== 自我反思：反馈检测 ==========
+
+# 反馈信号 → 偏好调整映射
+_FEEDBACK_PATTERNS = {
+    "style": {
+        "concise": ["太长了", "啰嗦", "简短点", "说重点", "太多了", "精简", "简洁"],
+        "detailed": ["详细说说", "展开讲讲", "多说一些", "说详细点", "具体讲讲"],
+    },
+    "tone": {
+        "casual": ["说人话", "白话", "通俗点", "别那么正式", "轻松一点"],
+        "classical": ["专业一些", "正式一些", "文雅一些"],
+    },
+}
+
+async def _detect_and_adapt(user_id: str, user_message: str, user_memory: dict):
+    """检测用户反馈信号，自动调整偏好"""
+    msg = user_message.strip()
+    if len(msg) > 50:
+        return  # 长消息不太可能是反馈
+
+    preferences = user_memory.get("preferences", {})
+    changed = False
+
+    for pref_key, patterns in _FEEDBACK_PATTERNS.items():
+        for value, keywords in patterns.items():
+            for kw in keywords:
+                if kw in msg:
+                    old_val = preferences.get(pref_key, "balanced")
+                    if old_val != value:
+                        preferences[pref_key] = value
+                        preferences["updated_at"] = datetime.now().isoformat()
+                        changed = True
+                        logger.info(
+                            f"🔄 偏好调整 | 用户: {user_id} | "
+                            f"{pref_key}: {old_val} → {value} | 触发词: {kw}"
+                        )
+                    break
+
+    if changed:
+        user_memory["preferences"] = preferences
+        await user_memory_manager.update_user_memory(user_id, {"preferences": preferences})
 
 
 # ========== 消息处理 ==========
@@ -275,13 +323,15 @@ async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_T
     # 添加用户消息到缓冲区（不阻塞主流程，fire-and-forget）
     asyncio.create_task(conversation_buffer.add_message(user_id, "user", user_message))
     
-    # 5. 调用 AI 获取回复
+    # 5. 调用 AI 获取回复（注入用户偏好）
+    preferences = user_memory.get("preferences", {})
     reply = await elena_ai.chat(
         user_message=user_message,
         user_name=user_name,
         conversation_history=conversation_history,
         tarot_context=tarot_context,
-        memory_context=memory_context
+        memory_context=memory_context,
+        preferences=preferences
     )
     
     # 6. 清理 Markdown 标记（AI 回复可能带 **加粗** 等，Zapry 不支持）
@@ -409,11 +459,13 @@ async def handle_group_mention(update: Update, context: ContextTypes.DEFAULT_TYP
     tarot_context = tarot_history_manager.format_readings_for_ai(tarot_readings) if tarot_readings else None
     
     # 群组对话不保存历史（避免多人对话混乱），但加载用户档案
+    preferences = user_memory.get("preferences", {})
     reply = await elena_ai.chat(
         user_message=clean_message,
         user_name=user_name,
         conversation_history=None,
         tarot_context=tarot_context,
+        preferences=preferences,
         memory_context=memory_context
     )
     
@@ -600,3 +652,34 @@ async def elena_intro_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await safe_reply(update.message, intro_text)
     
     logger.info(f"ℹ️ 自我介绍 | 用户: {update.effective_user.id}")
+
+
+async def notify_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    主动消息开关
+    /notify - 开启/关闭晚晴的主动问候
+    """
+    from services.proactive import proactive_scheduler
+
+    user_id = str(update.effective_user.id)
+    currently_enabled = await proactive_scheduler.is_enabled(user_id)
+
+    if currently_enabled:
+        await proactive_scheduler.disable_user(user_id)
+        await safe_reply(
+            update.message,
+            "好的，我不会主动打扰你了~\n\n想重新开启的话，随时发 /notify 就好 😊"
+        )
+        logger.info(f"🔕 主动消息已关闭 | 用户: {user_id}")
+    else:
+        await proactive_scheduler.enable_user(user_id)
+        await safe_reply(
+            update.message,
+            "已开启~ 我会在这些时候主动找你：\n\n"
+            "🌙 每天中午推送今日塔罗能量\n"
+            "🎂 你生日那天送祝福\n"
+            "🌿 节气的时候提醒你\n"
+            "💭 占卜几天后回访你的感受\n\n"
+            "不想收了随时发 /notify 关掉~"
+        )
+        logger.info(f"🔔 主动消息已开启 | 用户: {user_id}")

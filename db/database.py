@@ -333,6 +333,18 @@ CREATE TABLE IF NOT EXISTS daily_usage (
     PRIMARY KEY (user_id, usage_date)
 );
 
+-- =====================================================================
+-- 主动消息调度：定时推送运势、生日祝福、占卜回访等
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS proactive_schedule (
+    user_id         TEXT NOT NULL,
+    trigger_type    TEXT NOT NULL,                -- daily_fortune / birthday / solar_term / followup
+    next_trigger    TEXT NOT NULL,
+    last_sent       TEXT,
+    enabled         INTEGER DEFAULT 1,
+    PRIMARY KEY (user_id, trigger_type)
+);
+
 """
 
 

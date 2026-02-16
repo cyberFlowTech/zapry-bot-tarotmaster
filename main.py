@@ -187,12 +187,14 @@ def register_handlers():
         elena_intro_command,
         memory_command,
         forget_command,
+        notify_command,
     )
     bot.add_command("intro", elena_intro_command)
     bot.add_command("about", elena_intro_command)
     bot.add_command("clear", clear_history_command)
     bot.add_command("memory", memory_command)
     bot.add_command("forget", forget_command)
+    bot.add_command("notify", notify_command)
 
     # ── 塔罗占卜 ──
     from handlers.tarot import (
@@ -277,17 +279,24 @@ def register_handlers():
 
 @bot.on_post_init
 async def post_init(application):
-    """启动后: 初始化链上监听。"""
+    """启动后: 初始化链上监听 + 主动消息调度。"""
     from services.chain_monitor import chain_monitor
     chain_monitor.set_bot(application.bot)
     await chain_monitor.start()
 
+    from services.proactive import proactive_scheduler
+    proactive_scheduler.set_bot(application.bot)
+    await proactive_scheduler.start()
+
 
 @bot.on_post_shutdown
 async def post_shutdown(application):
-    """关闭前: 停止链上监听。"""
+    """关闭前: 停止后台服务。"""
     from services.chain_monitor import chain_monitor
     await chain_monitor.stop()
+
+    from services.proactive import proactive_scheduler
+    await proactive_scheduler.stop()
 
 
 # ═══════════════════════════════════════════════════
