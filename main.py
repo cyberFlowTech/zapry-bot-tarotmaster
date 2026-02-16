@@ -229,7 +229,23 @@ def register_handlers():
 
 @bot.on_post_init
 async def post_init(application):
-    """启动后: 初始化链上监听 + 主动消息调度。"""
+    """启动后: 注册命令菜单 + 初始化链上监听 + 主动消息调度。"""
+
+    # 注册 Bot 命令菜单（用户点击 / 时显示的列表）
+    from telegram import BotCommand
+    try:
+        await application.bot.set_my_commands([
+            BotCommand("start", "和晚晴打个招呼"),
+            BotCommand("tarot", "塔罗占卜"),
+            BotCommand("luck", "今日运势"),
+            BotCommand("recharge", "充值"),
+            BotCommand("balance", "查看余额"),
+            BotCommand("help", "晚晴能做什么"),
+        ])
+        logger.info("✅ Bot 命令菜单已注册")
+    except Exception as e:
+        logger.warning("⚠️ 命令菜单注册失败（平台可能不支持）: %s", e)
+
     from services.chain_monitor import chain_monitor
     chain_monitor.set_bot(application.bot)
     await chain_monitor.start()
