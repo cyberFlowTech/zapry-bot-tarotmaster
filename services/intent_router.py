@@ -151,6 +151,8 @@ class IntentRouter:
             return default_result
 
         try:
+            import time as _time
+            _t0 = _time.time()
             response = await self.client.chat.completions.create(
                 model=INTENT_MODEL,
                 messages=[
@@ -161,6 +163,8 @@ class IntentRouter:
                 max_tokens=100,
                 response_format={"type": "json_object"}
             )
+            _elapsed = (_time.time() - _t0) * 1000
+            logger.info(f"🎯 意图识别 LLM 调用完成 | 耗时: {_elapsed:.0f}ms")
 
             result_text = response.choices[0].message.content.strip()
             result = json.loads(result_text)

@@ -1,6 +1,7 @@
 """
 记忆提取器
 使用AI从对话中提取用户的关键信息，更新用户档案
+集成 SDK Tracing 追踪提取耗时
 """
 
 import json
@@ -9,6 +10,13 @@ from openai import AsyncOpenAI
 from config import OPENAI_API_KEY, OPENAI_BASE_URL
 
 logger = logging.getLogger(__name__)
+
+# Tracing（可选，SDK 不可用时降级）
+try:
+    from zapry_agents_sdk.tracing import Tracer, ConsoleExporter
+    _tracer = Tracer(exporter=ConsoleExporter(), enabled=True)
+except ImportError:
+    _tracer = None
 
 
 # 记忆提取专用模型（使用便宜的模型降低成本）
@@ -129,7 +137,9 @@ class MemoryExtractor:
             
             logger.info(f"🧠 开始记忆提取 | 对话数: {len(conversations)} | Prompt长度: {len(prompt)}")
             
-            # 调用AI提取（异步，不阻塞事件循环）
+            # 调用AI提取（异步，带 Tracing 计时）
+            import time as _time
+            _t0 = _time.time()
             response = await self.client.chat.completions.create(
                 model=EXTRACTION_MODEL,
                 messages=[
@@ -145,6 +155,9 @@ class MemoryExtractor:
                 max_tokens=1000
             )
             
+            _elapsed = (_time.time() - _t0) * 1000
+            logger.info(f"🧠 记忆提取 LLM 调用完成 | 耗时: {_elapsed:.0f}ms")
+
             # 解析结果
             result_text = response.choices[0].message.content.strip()
             
