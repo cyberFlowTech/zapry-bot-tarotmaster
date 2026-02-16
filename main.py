@@ -10,11 +10,23 @@ import sys
 
 # SDK 路径（开发阶段，SDK 尚未发布到 PyPI）
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-_SDK_CANDIDATES = [
+
+# Bot SDK（zapry_bot_sdk）
+_BOT_SDK_CANDIDATES = [
     os.path.normpath(os.path.join(_THIS_DIR, "..", "..", "related-codes", "zapry-bot-sdk-python")),  # 本地开发
     os.path.normpath(os.path.join(_THIS_DIR, "..", "zapry-bot-sdk-python")),  # 服务器部署
 ]
-for _sdk in _SDK_CANDIDATES:
+for _sdk in _BOT_SDK_CANDIDATES:
+    if os.path.isdir(_sdk) and _sdk not in sys.path:
+        sys.path.insert(0, _sdk)
+        break
+
+# Agents SDK（zapry_agents_sdk）— 可能和 Bot SDK 在同一个仓库，也可能是独立目录
+_AGENTS_SDK_CANDIDATES = [
+    os.path.normpath(os.path.join(_THIS_DIR, "..", "..", "related-codes", "zapry-agents-sdk-python")),  # 本地开发（独立目录）
+    os.path.normpath(os.path.join(_THIS_DIR, "..", "zapry-agents-sdk-python")),  # 服务器部署（独立目录）
+]
+for _sdk in _AGENTS_SDK_CANDIDATES:
     if os.path.isdir(_sdk) and _sdk not in sys.path:
         sys.path.insert(0, _sdk)
         break
