@@ -59,7 +59,8 @@ MEMORY_EXTRACTION_PROMPT = """你是一个信息提取专家。请从以下对�
     }},
     "concerns": [],
     "goals": [],
-    "recent_events": []
+    "recent_events": [],
+    "experiences": []
   }},
   "interests": [],
   "conversation_summary": ""
@@ -68,9 +69,11 @@ MEMORY_EXTRACTION_PROMPT = """你是一个信息提取专家。请从以下对�
 字段说明：
 - basic_info: age=年龄(数字), gender=性别, location=居住地, occupation=职业, school=学校, major=专业
 - personality: traits=性格特点, values=价值观, communication_style=沟通风格
-- life_context: relationships(romantic=感情状态, family=家庭情况, friends=朋友关系), concerns=当前困扰(最多3个), goals=目标愿望(最多3个), recent_events=近期重要事件(最多2个)
+- life_context: relationships(romantic=感情状态, family=家庭情况, friends=朋友关系), concerns=当前困扰(最多3个), goals=目标愿望(最多3个), recent_events=近期重要事件(最多2个), experiences=用户提到的具体经历和去过的地方(最多5个，例如"去过阿勒泰滑雪""在日本留学过""学过钢琴")
 - interests=兴趣爱好
 - conversation_summary=用一句话总结这个用户的特点(50字以内)
+
+【特别注意】用户提到的任何具体经历（去过哪里、做过什么、学过什么、尝试过什么），一定要提取到 experiences 字段中。这些是朋友之间聊天的重要记忆点。
 
 【对话内容】
 {conversations}

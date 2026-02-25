@@ -202,6 +202,12 @@ class UserMemoryManager:
         events = life.get('recent_events', [])
         if events:
             parts.append(f"  近期事件: {events[0]}")
+        experiences = life.get('experiences', [])
+        if experiences:
+            if not has_life:
+                parts.append("生活背景:")
+                has_life = True
+            parts.append(f"  经历过: {', '.join(experiences[:5])}")
         if has_life:
             parts.append("")
 
@@ -307,6 +313,7 @@ class UserMemoryManager:
                 "concerns": [],
                 "goals": [],
                 "recent_events": [],
+                "experiences": [],
             },
             "interests": [],
             "tarot_summary": {
