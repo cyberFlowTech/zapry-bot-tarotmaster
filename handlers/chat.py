@@ -556,6 +556,12 @@ async def memory_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         goals_str = '、'.join(life_context['goals'][:3])
         memory_text += f"你的目标是{goals_str}。\n\n"
 
+    # 经历
+    experiences = life_context.get('experiences', [])
+    if experiences:
+        exp_str = '、'.join(experiences[:4])
+        memory_text += f"你跟我说过{exp_str}。\n\n"
+
     # 兴趣爱好
     interests = user_memory.get('interests', [])
     if interests:
@@ -567,8 +573,6 @@ async def memory_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if summary:
         memory_text += f"{summary}\n\n"
 
-    count = user_memory.get('conversation_count', 0)
-    memory_text += f"我们聊了{count}次了，希望能帮到你一些 😊\n\n"
     memory_text += "如果有什么记错了跟我说，想让我忘掉也可以~"
     
     await safe_reply(update.message, memory_text)
